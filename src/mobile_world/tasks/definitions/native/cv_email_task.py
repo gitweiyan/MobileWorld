@@ -10,6 +10,9 @@ from typing import Any
 from loguru import logger
 
 from mobile_world.runtime.app_helpers import mail
+from mobile_world.runtime.app_helpers.system import (
+    time_sync_to_now,
+)
 from mobile_world.runtime.controller import AndroidController
 from mobile_world.runtime.utils.helpers import execute_adb
 from mobile_world.tasks.base import BaseTask
@@ -120,6 +123,8 @@ class CVEmailTask(BaseTask):
         # Create temp directory
         temp_dir = tempfile.mkdtemp()
         failed_files = []
+
+        time_sync_to_now()
 
         try:
             # Create 3 CV files (within last month)
