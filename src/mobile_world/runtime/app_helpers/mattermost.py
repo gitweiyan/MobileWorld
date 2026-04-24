@@ -514,6 +514,11 @@ def _extend_session_expiry():
     past those timestamps, sessions become invalid and the app logs the user out.
     This function extends all sessions to 100 years from now and refreshes
     lastactivityat to prevent idle-timeout invalidation.
+
+    MUST be called while only PostgreSQL is running, before the Mattermost server
+    container starts. Mattermost runs a session-cleanup pass shortly after it
+    connects to the DB and will DELETE any rows where expiresat is in the past,
+    racing against this UPDATE. Starting postgres first eliminates the race.
     """
     max_retries = 10
     for attempt in range(max_retries):
@@ -561,17 +566,26 @@ def start_mattermost_backend(mattermost_backend_status_dir=MATTERMOST_STATUS_DIR
         # Patch config before starting so Mattermost reads updated session settings
         _patch_mattermost_config()
 
-        # Change to mattermost docker directory and start services
+        # Start PostgreSQL first (without Mattermost) so we can extend session
+        # expiry before Mattermost connects and prunes "expired" rows. If both
+        # containers come up together, Mattermost's startup cleanup races our
+        # UPDATE and wins on slow-start runs, leaving the Android app with a
+        # token whose backing session row has been deleted (login screen).
+        pg_cmd = ["docker", "compose"] + COMPOSE_FILES + ["up", "-d", "postgres"]
+        subprocess.run(
+            pg_cmd, cwd=MATTERMOST_DOCKER_DIR, capture_output=True, text=True, check=True
+        )
+
+        # Extend existing session expiry while only postgres is running.
+        _extend_session_expiry()
+
+        # Now bring up the Mattermost server.
         cmd = ["docker", "compose"] + COMPOSE_FILES + ["up", "-d"]
         result = subprocess.run(
             cmd, cwd=MATTERMOST_DOCKER_DIR, capture_output=True, text=True, check=True
         )
         logger.info("Mattermost backend started successfully")
         logger.debug(f"Docker compose output: {result.stdout}\n{result.stderr}")
-
-        # Extend existing session expiry in the database.
-        # Must run after PostgreSQL is ready but before the Android app connects.
-        _extend_session_expiry()
 
         return True
     except subprocess.CalledProcessError as e:
