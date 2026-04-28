@@ -235,6 +235,8 @@
             const trajCache = {};
             let dataA = null, dataB = null;
             let modelInfoA = null, modelInfoB = null;
+            let metaA = null, metaB = null;
+            let videoA = null, videoB = null;
             let currentFilter = null; // 'pp' | 'pf' | 'fp' | 'ff' | null (all)
             let taskOutcomes = {};    // { taskName: { a: bool, b: bool } }
             let allTaskNames = [];
@@ -274,6 +276,93 @@
                 const data = JSON.parse(text);
                 trajCache[url] = data;
                 return data;
+            }
+
+            // ── Screenshot video utilities ──
+            const videoElCache = {};
+
+            function loadVideo(url) {
+                if (videoElCache[url]) return videoElCache[url];
+                const promise = (async () => {
+                    const resp = await fetch(url);
+                    if (!resp.ok) throw new Error(`Video HTTP ${resp.status}`);
+                    const blob = await resp.blob();
+                    const blobUrl = URL.createObjectURL(blob);
+                    const video = document.createElement('video');
+                    video.preload = 'auto';
+                    video.muted = true;
+                    video.playsInline = true;
+                    video.src = blobUrl;
+                    await new Promise((res, rej) => {
+                        video.addEventListener('loadeddata', res, { once: true });
+                        video.addEventListener('error', rej, { once: true });
+                    });
+                    return video;
+                })();
+                videoElCache[url] = promise;
+                return promise;
+            }
+
+            function extractFrame(video, frameIndex, fps) {
+                return new Promise((resolve) => {
+                    const targetTime = (frameIndex + 0.25) / fps;
+                    if (Math.abs(video.currentTime - targetTime) < 0.01) {
+                        resolve(video);
+                        return;
+                    }
+                    video.addEventListener('seeked', () => resolve(video), { once: true });
+                    video.currentTime = targetTime;
+                });
+            }
+
+            function drawActionOverlay(ctx, action, scaleX, scaleY) {
+                const actionType = action.action_type;
+                if (['click', 'double_tap', 'long_press'].includes(actionType)) {
+                    const x = action.x * scaleX, y = action.y * scaleY;
+                    const r = 16 * scaleX;
+                    ctx.beginPath();
+                    ctx.arc(x, y, r, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+                    ctx.fill();
+                    ctx.strokeStyle = 'red';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                } else if (actionType === 'drag') {
+                    const sx = action.start_x * scaleX, sy = action.start_y * scaleY;
+                    const ex = action.end_x * scaleX, ey = action.end_y * scaleY;
+                    if (sx != null && sy != null && ex != null && ey != null) {
+                        ctx.beginPath();
+                        ctx.moveTo(sx, sy);
+                        ctx.lineTo(ex, ey);
+                        ctx.strokeStyle = 'rgba(0, 100, 255, 0.7)';
+                        ctx.lineWidth = 3 * scaleX;
+                        ctx.stroke();
+                        const r = 12 * scaleX;
+                        ctx.beginPath();
+                        ctx.arc(sx, sy, r, 0, Math.PI * 2);
+                        ctx.fillStyle = 'rgba(0, 180, 0, 0.6)';
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(ex, ey, r, 0, Math.PI * 2);
+                        ctx.fillStyle = 'rgba(255, 0, 0, 0.6)';
+                        ctx.fill();
+                    }
+                }
+            }
+
+            async function renderScreenshotCanvas(canvas, video, frameIndex, fps, meta, action) {
+                await extractFrame(video, frameIndex, fps);
+                const dw = meta.display_width;
+                const dh = meta.display_height;
+                canvas.width = dw;
+                canvas.height = dh;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, dw, dh);
+                if (action) {
+                    const scaleX = dw / meta.original_width;
+                    const scaleY = dh / meta.original_height;
+                    drawActionOverlay(ctx, action, scaleX, scaleY);
+                }
             }
 
             function formatMeta(info) {
@@ -337,6 +426,24 @@
                     return;
                 }
 
+                metaA = dataA._meta || null;
+                metaB = dataB._meta || null;
+                videoA = null; videoB = null;
+                const videoLoads = [];
+                if (metaA && metaA.video_file) {
+                    const url = metaA.video_file.startsWith('http')
+                        ? metaA.video_file
+                        : modelInfoA.traj_file.replace(/[^/]+$/, '') + metaA.video_file;
+                    videoLoads.push(loadVideo(url).then(v => { videoA = v; }).catch(() => {}));
+                }
+                if (metaB && metaB.video_file) {
+                    const url = metaB.video_file.startsWith('http')
+                        ? metaB.video_file
+                        : modelInfoB.traj_file.replace(/[^/]+$/, '') + metaB.video_file;
+                    videoLoads.push(loadVideo(url).then(v => { videoB = v; }).catch(() => {}));
+                }
+                await Promise.all(videoLoads);
+
                 document.getElementById('arena-loading').style.display = 'none';
                 document.getElementById('arena-content').style.display = '';
 
@@ -355,8 +462,8 @@
             // ── Build outcome map ──
             function buildOutcomes() {
                 taskOutcomes = {};
-                const keysA = new Set(Object.keys(dataA));
-                const keysB = new Set(Object.keys(dataB));
+                const keysA = new Set(Object.keys(dataA).filter(k => k !== '_meta'));
+                const keysB = new Set(Object.keys(dataB).filter(k => k !== '_meta'));
                 allTaskNames = [...new Set([...keysA, ...keysB])].sort();
 
                 allTaskNames.forEach(name => {
@@ -523,8 +630,24 @@
                 document.getElementById('arena-col-b-steps').textContent = `${(taskB?.traj || []).length} steps`;
 
                 // Render steps
-                document.getElementById('arena-col-a-body').innerHTML = renderSteps(taskA);
-                document.getElementById('arena-col-b-body').innerHTML = renderSteps(taskB);
+                document.getElementById('arena-col-a-body').innerHTML = renderSteps(taskA, 'a');
+                document.getElementById('arena-col-b-body').innerHTML = renderSteps(taskB, 'b');
+
+                // Render screenshot frames
+                async function renderSideCanvases(containerId, vid, meta, task) {
+                    if (!vid || !meta || !task) return;
+                    const canvases = document.getElementById(containerId).querySelectorAll('.traj-canvas');
+                    for (const canvas of canvases) {
+                        const fi = parseInt(canvas.dataset.frame);
+                        const si = parseInt(canvas.dataset.step);
+                        const action = task.traj[si]?.action || null;
+                        await renderScreenshotCanvas(canvas, vid, fi, meta.fps, meta, action);
+                    }
+                }
+                Promise.all([
+                    renderSideCanvases('arena-col-a-body', videoA, metaA, taskA),
+                    renderSideCanvases('arena-col-b-body', videoB, metaB, taskB),
+                ]);
 
                 // Token usage
                 renderTokens('arena-col-a-tokens', taskA?.token_usage);
@@ -539,10 +662,12 @@
                 el.className = 'arena-col-badge ' + (pass ? 'arena-col-badge--pass' : 'arena-col-badge--fail');
             }
 
-            function renderSteps(task) {
+            function renderSteps(task, side) {
                 if (!task || !task.traj || task.traj.length === 0) {
                     return '<div class="arena-empty">No trajectory data.</div>';
                 }
+                const meta = side === 'a' ? metaA : metaB;
+                const vid = side === 'a' ? videoA : videoB;
                 return task.traj.map((step, i) => {
                     const pred = step.prediction || '';
 
@@ -554,6 +679,11 @@
                         actionStr += `: "${action.text}"`;
                     if (action.direction)
                         actionStr += ` ${action.direction}`;
+
+                    const hasFrame = step.frame_index !== undefined && vid && meta;
+                    const screenshotHtml = hasFrame
+                        ? `<div class="traj-screenshot"><canvas class="traj-canvas" data-frame="${step.frame_index}" data-step="${i}" data-side="${side}"></canvas></div>`
+                        : '';
 
                     const askUser = step.ask_user_response
                         ? `<div class="traj-ask-user"><span class="traj-ask-label">User Response</span><span>${escHtml(step.ask_user_response)}</span></div>`
@@ -568,6 +698,7 @@
                             <span class="traj-step-num">Step ${step.step || i + 1}</span>
                             <span class="traj-action-badge">${escHtml(actionStr)}</span>
                         </div>
+                        ${screenshotHtml}
                         ${pred ? `<div class="traj-response">${escHtml(pred)}</div>` : ''}
                         ${askUser}
                         ${toolCall}
@@ -581,6 +712,22 @@
                 if (!tu) { el.textContent = ''; return; }
                 el.textContent = `${(tu.prompt_tokens || 0).toLocaleString()} prompt · ${(tu.completion_tokens || 0).toLocaleString()} completion · ${(tu.total_tokens || 0).toLocaleString()} total`;
             }
+
+            // Click-to-zoom on screenshot canvases
+            document.addEventListener('click', (e) => {
+                const canvas = e.target.closest('.traj-canvas');
+                if (!canvas) return;
+                const overlay = document.createElement('div');
+                overlay.className = 'traj-screenshot-overlay';
+                const big = document.createElement('canvas');
+                big.width = canvas.width * 2;
+                big.height = canvas.height * 2;
+                const ctx = big.getContext('2d');
+                ctx.drawImage(canvas, 0, 0, big.width, big.height);
+                overlay.appendChild(big);
+                overlay.addEventListener('click', () => overlay.remove());
+                document.body.appendChild(overlay);
+            });
         });
     </script>
 </body>
