@@ -39,13 +39,18 @@ async def execute(args: argparse.Namespace) -> None:
     log_file_root = args.log_file_root or args.output or "./traj_logs"
 
     if args.device is None:
-        devices = subprocess.check_output(["adb", "devices"]).decode("utf-8").splitlines()
-        devices = [device.split("\t")[0] for device in devices if "\t" in device]
-        if len(devices) == 0:
-            raise ValueError("No Android devices found")
-        if len(devices) > 1:
-            raise ValueError("Multiple Android devices found, please specify the device ID")
-        args.device = devices[0]
+        if args.aw_host:
+            # Remote mode: default to emulator-5554 on the remote executor,
+            # skip local adb devices check (no emulator on this machine).
+            args.device = "emulator-5554"
+        else:
+            devices = subprocess.check_output(["adb", "devices"]).decode("utf-8").splitlines()
+            devices = [device.split("\t")[0] for device in devices if "\t" in device]
+            if len(devices) == 0:
+                raise ValueError("No Android devices found")
+            if len(devices) > 1:
+                raise ValueError("Multiple Android devices found, please specify the device ID")
+            args.device = devices[0]
 
     console = Console()
     # Parse single aw_host URL for test task

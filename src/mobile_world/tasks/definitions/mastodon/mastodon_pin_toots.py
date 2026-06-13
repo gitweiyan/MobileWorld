@@ -32,7 +32,8 @@ class MastodonPinTootsTask(BaseTask):
     def is_successful(self, controller: AndroidController) -> float | tuple[float, str]:
         self._check_is_initialized()
 
-        assert mastodon.is_mastodon_healthy()
+        if not mastodon.is_mastodon_healthy():
+            return 0.0, "Mastodon backend is not healthy"
         time.sleep(1)
 
         # Check if the toots are pinned

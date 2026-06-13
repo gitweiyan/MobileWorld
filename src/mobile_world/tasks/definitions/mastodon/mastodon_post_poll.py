@@ -47,7 +47,8 @@ class MastodonPostPollTask(BaseTask):
         """
         self._check_is_initialized()
 
-        assert mastodon.is_mastodon_healthy()
+        if not mastodon.is_mastodon_healthy():
+            return 0.0, "Mastodon backend is not healthy"
         time.sleep(1)
 
         toots = mastodon.get_latest_toots_by_username(self.EXPECTED_USERNAME, limit=1)

@@ -58,7 +58,8 @@ class MastodonOpenAutomatedDeletionTask(BaseTask):
         """
         self._check_is_initialized()
 
-        assert mastodon.is_mastodon_healthy()
+        if not mastodon.is_mastodon_healthy():
+            return 0.0, "Mastodon backend is not healthy"
         time.sleep(1)
 
         automated_post_deletions_setting = mastodon.get_automated_post_deletions_setting(

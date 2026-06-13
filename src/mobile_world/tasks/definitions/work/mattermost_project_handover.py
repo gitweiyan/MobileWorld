@@ -23,7 +23,8 @@ class MattermostProjectHandoverTask(BaseTask):
     def is_successful(self, controller: AndroidController) -> float | tuple[float, str]:
         self._check_is_initialized()
         # to check if the task is successful, we need the mattermost backend to be running
-        assert mattermost.is_mattermost_healthy()
+        if not mattermost.is_mattermost_healthy():
+            return 0.0, "Mattermost backend is not healthy"
 
         # check alex has been added to the phoenix channel
         alex_added = mattermost.is_user_in_channel(

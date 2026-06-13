@@ -50,7 +50,8 @@ class MastodonReportTask(BaseTask):
         """
         self._check_is_initialized()
 
-        assert mastodon.is_mastodon_healthy()
+        if not mastodon.is_mastodon_healthy():
+            return 0.0, "Mastodon backend is not healthy"
         time.sleep(2)  # wait for the report to be submitted
 
         report_info = mastodon.get_report_info(self.EXPECTED_TOOT_ID)

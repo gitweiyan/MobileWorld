@@ -24,7 +24,8 @@ class MattermostReplyToMessageTask(BaseTask):
     def is_successful(self, controller: AndroidController) -> float | tuple[float, str]:
         self._check_is_initialized()
         # to check if the task is successful, we need the mattermost backend to be running
-        assert mattermost.is_mattermost_healthy()
+        if not mattermost.is_mattermost_healthy():
+            return 0.0, "Mattermost backend is not healthy"
 
         message = mattermost.get_latest_messages()[0]
         if message[6] != self.EARLIER_MSG_ID:

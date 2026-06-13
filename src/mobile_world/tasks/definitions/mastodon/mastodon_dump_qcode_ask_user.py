@@ -130,7 +130,8 @@ class MastodonDumpQcodeAskUserTask(BaseTask):
         """
         self._check_is_initialized()
 
-        assert mastodon.is_mastodon_healthy()
+        if not mastodon.is_mastodon_healthy():
+            return 0.0, "Mastodon backend is not healthy"
 
         success, message = _check_qr_code_saved(
             target_path=self.target_path, username=self.source_username

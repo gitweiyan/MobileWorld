@@ -206,6 +206,24 @@ def env_validation(aw_url: str | None, device: str = "emulator-5554") -> str:
         )
     )
 
+    # Remote mode: when aw_url is explicitly provided, this machine is a thin HTTP
+    # client connecting to a remote MobileWorld executor. Skip all local ADB and
+    # device checks — the executor manages its own emulator and ADB keyboard.
+    if aw_url is not None:
+        _console.print("[green]✓ Remote server mode — skipping local device checks[/green]")
+        _console.print(f"[green]✓ Using remote server: {aw_url}[/green]")
+        _console.print(f"[dim]Device ID for remote executor: {device}[/dim]")
+        _console.print(
+            Panel(
+                "[bold green]Remote connection configured![/bold green]",
+                title="[bold green]✓ Environment Ready",
+                border_style="green",
+            )
+        )
+        return aw_url
+
+    # --- Local mode: full prerequisite checks below ---
+
     if not _check_adb_exists():
         _console.print(
             Panel(
@@ -229,24 +247,20 @@ def env_validation(aw_url: str | None, device: str = "emulator-5554") -> str:
 
     _console.print("[green]✓ ADB found[/green]")
 
-    server_url = aw_url
+    server_url = _start_server_background()
     if server_url is None:
-        server_url = _start_server_background()
-        if server_url is None:
-            _console.print(
-                Panel(
-                    "[bold red]Failed to start MobileWorld server![/bold red]\n\n"
-                    "[yellow]You can start the server manually:[/yellow]\n\n"
-                    "   [cyan]mobile-world server --port 6800[/cyan]\n\n"
-                    "Or run inside Docker container:\n\n"
-                    "   [cyan]mobile-world env launch[/cyan]",
-                    title="[bold red]❌ Server Start Failed",
-                    border_style="red",
-                )
+        _console.print(
+            Panel(
+                "[bold red]Failed to start MobileWorld server![/bold red]\n\n"
+                "[yellow]You can start the server manually:[/yellow]\n\n"
+                "   [cyan]mobile-world server --port 6800[/cyan]\n\n"
+                "Or run inside Docker container:\n\n"
+                "   [cyan]mobile-world env launch[/cyan]",
+                title="[bold red]❌ Server Start Failed",
+                border_style="red",
             )
-            sys.exit(1)
-    else:
-        _console.print(f"[green]✓ Using provided server URL: {server_url}[/green]")
+        )
+        sys.exit(1)
 
     if not _check_adb_keyboard_installed(device):
         _console.print("[yellow]⚠ ADB Keyboard not found, installing...[/yellow]")

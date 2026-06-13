@@ -8,6 +8,11 @@ from mobile_world.runtime.app_helpers import mastodon
 from mobile_world.runtime.controller import AndroidController
 from mobile_world.tasks.base import BaseTask
 
+# Resolve assets directory relative to this file, so it works on both
+# macOS-native and Linux container deployments.
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_ASSETS_DIR = os.path.join(_THIS_DIR, "assets", "importMuted")
+
 
 class MastodonImportMutedUsersTask(BaseTask):
     goal = "In Mastodon, import my muted list from the file named 'muted_accounts.csv' in the Downloads directory."
@@ -15,21 +20,21 @@ class MastodonImportMutedUsersTask(BaseTask):
     EXPECTED_USERNAME = "test"
     EXPECTED_MUTED_USERS = ["olivia"]
     EXPECTED_FILE_NAME = "muted_accounts.csv"
-    ASSETS_PATH = "/app/service/src/mobile_world/tasks/definitions/mastodon/assets/importMuted"
-
+    ASSETS_PATH = _ASSETS_DIR
 
     app_names = {
         "Mastodon",
     }
 
     def initialize_task_hook(self, controller: AndroidController) -> bool:
-        # push the image to the gallery
+        # push the CSV file to device
         file_path = os.path.join(self.ASSETS_PATH, self.EXPECTED_FILE_NAME)
         if not os.path.exists(file_path):
-            return 0.0, f"File path not found: {file_path}"
+            logger.error(f"File path not found: {file_path}")
+            return False
         controller.push_file(file_path, f"/sdcard/Download/{self.EXPECTED_FILE_NAME}")
         controller.refresh_media_scan("/sdcard/Download/")
-        
+
         try:
             mastodon.start_mastodon_backend()
             return True
@@ -44,7 +49,8 @@ class MastodonImportMutedUsersTask(BaseTask):
         """
         self._check_is_initialized()
 
-        assert mastodon.is_mastodon_healthy()
+        if not mastodon.is_mastodon_healthy():
+            return 0.0, "Mastodon backend is not healthy"
         time.sleep(1)  # wait for the muted list to be imported
 
         # Check muted users

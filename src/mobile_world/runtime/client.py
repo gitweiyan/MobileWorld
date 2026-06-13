@@ -25,7 +25,7 @@ class AndroidEnvClient:
 
     def __init__(
         self,
-        url: str = "http://localhost:8000",
+        url: str = "http://localhost:6800",
         device: str = "emulator-5554",
         step_wait_time: float = 1.0,
     ):

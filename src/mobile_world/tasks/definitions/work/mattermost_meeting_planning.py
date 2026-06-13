@@ -177,7 +177,8 @@ class MattermostMeetingPlanningTask(BaseTask):
 
     async def is_successful_async(self, controller: AndroidController) -> float | tuple[float, str]:
         self._check_is_initialized()
-        assert mattermost.is_mattermost_healthy()
+        if not mattermost.is_mattermost_healthy():
+            return 0.0, "Mattermost backend is not healthy"
 
         dates = self._dates
 

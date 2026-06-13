@@ -37,7 +37,8 @@ class MastodonChangeLanguageTask(BaseTask):
         """
         self._check_is_initialized()
 
-        assert mastodon.is_mastodon_healthy()
+        if not mastodon.is_mastodon_healthy():
+            return 0.0, "Mastodon backend is not healthy"
         time.sleep(1)  # wait for the language to be changed
 
         user_info = mastodon.get_user_info(self.EXPECTED_USERNAME)

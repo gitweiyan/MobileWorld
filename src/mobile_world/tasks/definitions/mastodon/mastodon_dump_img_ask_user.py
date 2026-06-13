@@ -245,7 +245,8 @@ class MastodonDumpImgAskUserTask(BaseTask):
     def is_successful(self, controller: AndroidController) -> tuple[float, str]:
         self._check_is_initialized()
 
-        assert mastodon.is_mastodon_healthy()
+        if not mastodon.is_mastodon_healthy():
+            return 0.0, "Mastodon backend is not healthy"
 
         # Verify we have expected images from initialization
         if not self._expected_images:

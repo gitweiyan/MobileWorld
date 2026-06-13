@@ -22,7 +22,8 @@ class MattermostCreateChannelTask(BaseTask):
 
     def is_successful(self, controller: AndroidController) -> float | tuple[float, str]:
         self._check_is_initialized()
-        assert mattermost.is_mattermost_healthy()
+        if not mattermost.is_mattermost_healthy():
+            return 0.0, "Mattermost backend is not healthy"
 
         channel_info = mattermost.get_channel_info(channel_name="reading")
         if channel_info is None:

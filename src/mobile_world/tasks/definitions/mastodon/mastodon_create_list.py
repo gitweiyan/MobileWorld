@@ -48,7 +48,8 @@ class MastodonCreateListTask(BaseTask):
         """
         self._check_is_initialized()
 
-        assert mastodon.is_mastodon_healthy()
+        if not mastodon.is_mastodon_healthy():
+            return 0.0, "Mastodon backend is not healthy"
 
         lists = mastodon.get_lists_by_username(self.EXPECTED_USERNAME)
         if not lists:

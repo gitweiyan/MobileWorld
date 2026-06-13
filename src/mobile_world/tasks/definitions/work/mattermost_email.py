@@ -27,7 +27,8 @@ class MattermostEmailTask(BaseTask):
         self._check_is_initialized()
 
         # to check if the task is successful, we need the mattermost backend to be running
-        assert mattermost.is_mattermost_healthy()
+        if not mattermost.is_mattermost_healthy():
+            return 0.0, "Mattermost backend is not healthy"
 
         # check 1: the email is sent to legal@company.com and the attachment is the contract, subject contains the tracking code
         sent_email_info = mail.get_sent_email_info()

@@ -10,6 +10,11 @@ from mobile_world.runtime.app_helpers import mastodon
 from mobile_world.runtime.controller import AndroidController
 from mobile_world.tasks.base import BaseTask
 
+# Resolve assets directory relative to this file, so it works on both
+# macOS-native and Linux container deployments.
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_ASSETS_DIR = os.path.join(_THIS_DIR, "assets", "shareLocation")
+
 
 class MastodonShareLocationTask(BaseTask):
     goal = "Search for the location Eiffel Tower on Google Map, and share the link to Mastodon, add the Eiffel Tower image in my photo gallery, then post it."
@@ -18,7 +23,7 @@ class MastodonShareLocationTask(BaseTask):
     EXPECTED_URL = "https://maps.app.goo.gl/xxxxxx"
     EXPECTED_LOCATION = "Eiffel Tower"
     EXPECTED_IMAGE = "Eiffel_Tower.jpg"
-    ASSETS_PATH = "/app/service/src/mobile_world/tasks/definitions/mastodon/assets/shareLocation"
+    ASSETS_PATH = _ASSETS_DIR
 
     task_tags = {"lang-en"}
 
@@ -28,7 +33,8 @@ class MastodonShareLocationTask(BaseTask):
         # push the image to the gallery
         image_path = os.path.join(self.ASSETS_PATH, self.EXPECTED_IMAGE)
         if not os.path.exists(image_path):
-            return 0.0, f"Image path not found: {image_path}"
+            logger.error(f"Image path not found: {image_path}")
+            return False
         controller.push_file(image_path, "/sdcard/Download/Eiffel_Tower.jpg")
         controller.refresh_media_scan("/sdcard/Download/")
 
@@ -48,7 +54,8 @@ class MastodonShareLocationTask(BaseTask):
         """
         self._check_is_initialized()
 
-        assert mastodon.is_mastodon_healthy()
+        if not mastodon.is_mastodon_healthy():
+            return 0.0, "Mastodon backend is not healthy"
         time.sleep(1)
 
         toots = mastodon.get_latest_toots_by_username(self.EXPECTED_USERNAME, limit=1)
