@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -19,20 +20,62 @@ from psycopg2 import Error
 from mobile_world.runtime.controller import AndroidController
 from mobile_world.runtime.utils.helpers import execute_adb
 
-MASTODON_DOCKER_DIR = "/app/mastodon-docker"  # for docker-in-docker development
+
+def _use_macos_native_backends() -> bool:
+    """Whether to use docker/macos/ paths instead of Linux container paths."""
+    flag = os.environ.get("MW_MACOS_NATIVE", "").lower()
+    if flag in ("1", "true", "yes"):
+        return True
+    if flag in ("0", "false", "no"):
+        return False
+    # Only auto-detect on macOS hosts — avoid misrouting Linux DinD when docker/macos/ exists in the repo.
+    return platform.system() == "Darwin"
+
+
+def _get_project_root() -> str:
+    """Get the project root directory for macOS-native docker/macos/ backends."""
+    if not _use_macos_native_backends():
+        return ""
+
+    project_dir = os.environ.get("MW_PROJECT_DIR")
+    if project_dir:
+        return project_dir
+
+    current = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(10):
+        if os.path.isdir(os.path.join(current, "docker", "macos")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return ""
+
+
+_PROJECT_ROOT = _get_project_root()
+
+if _PROJECT_ROOT:
+    # macOS: services run in docker/macos/, no KVM needed
+    MASTODON_DOCKER_DIR = os.path.join(_PROJECT_ROOT, "docker", "macos", "mastodon")
+    MASTODON_STATUS_DIR = MASTODON_DOCKER_DIR  # same dir — no copy needed
+    MEDIA_ROOT = os.path.join(MASTODON_DOCKER_DIR, "data", "media")
+else:
+    # Linux: original container paths (docker-in-docker)
+    MASTODON_DOCKER_DIR = "/app/mastodon-docker"
+    MASTODON_STATUS_DIR = "/app/mastodon-docker-bk"
+    MEDIA_ROOT = "/app/mastodon-docker/data/media"
+
 COMPOSE_FILE = "docker-compose.yml"
 MASTODON_DB_HOST = "localhost"  # database host address
 MASTODON_DB_DATABASE = "mastodon"  # database name
 MASTODON_DB_USER = "postgres"  # database user
 MASTODON_DB_PASSWORD = "postgres"  # database password
 MASTODON_DB_PORT = "5432"  # database port
-MASTODON_LOCAL_DOMAIN = "10.0.2.2"  # local domain name (used by Android/emulator to访问实例)
-MASTODON_STATUS_DIR = "/app/mastodon-docker-bk"
+MASTODON_LOCAL_DOMAIN = "10.0.2.2"  # local domain name (used by Android/emulator to access instance)
 
 MASTODON_HEALTH_URL = "https://localhost/api/v1/instance"  # need host header 10.0.2.2
 
 PUBLIC_SYSTEM_ROOT = "/opt/mastodon/public/system"  # media directory inside the container
-MEDIA_ROOT = "/app/mastodon-docker/data/media"  # for docker-in-docker development
 
 
 def copytree_with_ownership(src, dst):
@@ -123,11 +166,15 @@ def start_mastodon_backend(mastodon_backend_status_dir=MASTODON_STATUS_DIR) -> b
     if status in ["running", "partial"]:
         logger.info("Mastodon backend is already running, stop and reset it to default")
         stop_mastodon_backend()
-    shutil.rmtree(MASTODON_DOCKER_DIR, ignore_errors=True)
+
+    # On macOS (or when DOCKER_DIR == STATUS_DIR), the data is already in place —
+    # skip the destructive rmtree + copy cycle to avoid data loss.
+    if MASTODON_DOCKER_DIR != mastodon_backend_status_dir:
+        shutil.rmtree(MASTODON_DOCKER_DIR, ignore_errors=True)
 
     try:
         # copy the backend status directory to the docker directory
-        if mastodon_backend_status_dir:
+        if mastodon_backend_status_dir and MASTODON_DOCKER_DIR != mastodon_backend_status_dir:
             copytree_with_ownership(mastodon_backend_status_dir, MASTODON_DOCKER_DIR)
 
         # start services
@@ -162,7 +209,9 @@ def stop_mastodon_backend() -> bool:
         logger.info("Mastodon backend stopped successfully")
         logger.debug(f"Docker compose output: {result.stdout}\n{result.stderr}")
 
-        shutil.rmtree(MASTODON_DOCKER_DIR)
+        # On macOS, DOCKER_DIR is our actual data — don't delete it
+        if MASTODON_DOCKER_DIR != MASTODON_STATUS_DIR:
+            shutil.rmtree(MASTODON_DOCKER_DIR)
         return True
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to stop Mastodon backend: {e}")

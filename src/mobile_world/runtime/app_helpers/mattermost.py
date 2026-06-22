@@ -1,5 +1,6 @@
 import json
 import os
+import platform
 import shutil
 import subprocess
 import time
@@ -8,15 +9,56 @@ import psycopg2
 from loguru import logger
 from psycopg2 import Error
 
-MATTERMOST_DOCKER_DIR = "/app/mattermost-docker"
-COMPOSE_FILES = ["-f", "docker-compose.yml", "-f", "docker-compose.without-nginx.yml"]
+
+def _use_macos_native_backends() -> bool:
+    """Whether to use docker/macos/ paths instead of Linux container paths."""
+    flag = os.environ.get("MW_MACOS_NATIVE", "").lower()
+    if flag in ("1", "true", "yes"):
+        return True
+    if flag in ("0", "false", "no"):
+        return False
+    # Only auto-detect on macOS hosts — avoid misrouting Linux DinD when docker/macos/ exists in the repo.
+    return platform.system() == "Darwin"
+
+
+def _get_project_root() -> str:
+    """Get the project root directory for macOS-native docker/macos/ backends."""
+    if not _use_macos_native_backends():
+        return ""
+
+    project_dir = os.environ.get("MW_PROJECT_DIR")
+    if project_dir:
+        return project_dir
+
+    current = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(10):
+        if os.path.isdir(os.path.join(current, "docker", "macos")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return ""
+
+
+_PROJECT_ROOT = _get_project_root()
+
+if _PROJECT_ROOT:
+    # macOS: services run in docker/macos/, simplified compose (no nginx)
+    MATTERMOST_DOCKER_DIR = os.path.join(_PROJECT_ROOT, "docker", "macos", "mattermost")
+    MATTERMOST_STATUS_DIR = MATTERMOST_DOCKER_DIR  # same dir — no copy needed
+    COMPOSE_FILES = ["-f", "docker-compose.yml"]
+else:
+    # Linux: original container paths (docker-in-docker)
+    MATTERMOST_DOCKER_DIR = "/app/mattermost-docker"
+    MATTERMOST_STATUS_DIR = "/app/mattermost-docker-bk"
+    COMPOSE_FILES = ["-f", "docker-compose.yml", "-f", "docker-compose.without-nginx.yml"]
+
 MATTERMOST_DB_HOST = "localhost"
 MATTERMOST_DB_DATABASE = "mattermost"
 MATTERMOST_DB_USER = "mmuser"
 MATTERMOST_DB_PASSWORD = "mmuser_password"
 MATTERMOST_DB_PORT = "5433"
-
-MATTERMOST_STATUS_DIR = "/app/mattermost-docker-bk"
 SAM_HARRY_CHANNEL_ID = "m3d6byju9ig4dneosajg9hu1be"
 HARRY_ID = "p11jse4oa3biikeeefcuggns9o"
 PHOENIX_CHANNEL_ID = "6xntskboopfwxysbdebkzqyckh"
@@ -571,11 +613,16 @@ def start_mattermost_backend(mattermost_backend_status_dir=MATTERMOST_STATUS_DIR
     if status == "running":
         logger.info("Mattermost backend is already running, stop and reset it to default")
         stop_mattermost_backend()
-    shutil.rmtree(MATTERMOST_DOCKER_DIR, ignore_errors=True)
+
+    # On macOS (or when DOCKER_DIR == STATUS_DIR), the data is already in place —
+    # skip the destructive rmtree + copy cycle to avoid data loss.
+    if MATTERMOST_DOCKER_DIR != mattermost_backend_status_dir:
+        shutil.rmtree(MATTERMOST_DOCKER_DIR, ignore_errors=True)
 
     try:
         # mattermost backend requires 2000:2000 permission, need to preserve
-        copytree_with_ownership(mattermost_backend_status_dir, MATTERMOST_DOCKER_DIR)
+        if MATTERMOST_DOCKER_DIR != mattermost_backend_status_dir:
+            copytree_with_ownership(mattermost_backend_status_dir, MATTERMOST_DOCKER_DIR)
 
         # Patch config before starting so Mattermost reads updated session settings
         _patch_mattermost_config()
@@ -624,7 +671,9 @@ def stop_mattermost_backend():
         logger.info("Mattermost backend stopped successfully")
         logger.debug(f"Docker compose output: {result.stdout}\n{result.stderr}")
 
-        shutil.rmtree(MATTERMOST_DOCKER_DIR)
+        # On macOS, DOCKER_DIR is our actual data — don't delete it
+        if MATTERMOST_DOCKER_DIR != MATTERMOST_STATUS_DIR:
+            shutil.rmtree(MATTERMOST_DOCKER_DIR)
         return True
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to stop Mattermost backend: {e}")
